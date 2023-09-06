@@ -28,7 +28,7 @@ def pytest_generate_tests(metafunc):
         data = json.load(file)
 
     for func, cases in data.items():
-        key = func + "_data"
+        key = f"{func}_data"
         if key in metafunc.fixturenames:
             metafunc.parametrize(key, cases)
 
@@ -530,11 +530,10 @@ def test_stores_assigned_variations_in_the_user():
     gb.run(Experiment(key="my-test-3", variations=[0, 1]))
 
     assigned = gb.getAllResults()
-    assignedArr = []
-
-    for e in assigned:
-        assignedArr.append({"key": e, "variation": assigned[e]["result"].variationId})
-
+    assignedArr = [
+        {"key": e, "variation": assigned[e]["result"].variationId}
+        for e in assigned
+    ]
     assert len(assignedArr) == 2
     assert assignedArr[0]["key"] == "my-test"
     assert assignedArr[0]["variation"] == 1

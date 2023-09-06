@@ -54,25 +54,21 @@ def inRange(n: float, range: Tuple[float, float]) -> bool:
 
 
 def inNamespace(userId: str, namespace: Tuple[str, float, float]) -> bool:
-    n = gbhash("__" + namespace[0], userId, 1)
-    if n is None:
-        return False
-    return n >= namespace[1] and n < namespace[2]
+    n = gbhash(f"__{namespace[0]}", userId, 1)
+    return False if n is None else n >= namespace[1] and n < namespace[2]
 
 
 def getEqualWeights(numVariations: int) -> List[float]:
     if numVariations < 1:
         return []
-    return [1 / numVariations for i in range(numVariations)]
+    return [1 / numVariations for _ in range(numVariations)]
 
 
 def getBucketRanges(
     numVariations: int, coverage: float = 1, weights: List[float] = None
 ) -> List[Tuple[float, float]]:
-    if coverage < 0:
-        coverage = 0
-    if coverage > 1:
-        coverage = 1
+    coverage = max(coverage, 0)
+    coverage = min(coverage, 1)
     if weights is None:
         weights = getEqualWeights(numVariations)
     if len(weights) != numVariations:
@@ -91,10 +87,7 @@ def getBucketRanges(
 
 
 def chooseVariation(n: float, ranges: List[Tuple[float, float]]) -> int:
-    for i, r in enumerate(ranges):
-        if inRange(n, r):
-            return i
-    return -1
+    return next((i for i, r in enumerate(ranges) if inRange(n, r)), -1)
 
 
 def getQueryStringOverride(id: str, url: str, numVariations: int) -> Optional[int]:
@@ -108,9 +101,7 @@ def getQueryStringOverride(id: str, url: str, numVariations: int) -> Optional[in
     if variation is None or not variation.isdigit():
         return None
     varId = int(variation)
-    if varId < 0 or varId >= numVariations:
-        return None
-    return varId
+    return None if varId < 0 or varId >= numVariations else varId
 
 
 def decrypt(encrypted_str: str, key_str: str) -> str:
@@ -141,35 +132,25 @@ def evalCondition(attributes: dict, condition: dict) -> bool:
     if "$not" in condition:
         return not evalCondition(attributes, condition["$not"])
 
-    for key, value in condition.items():
-        if not evalConditionValue(value, getPath(attributes, key)):
-            return False
-
-    return True
+    return all(
+        evalConditionValue(value, getPath(attributes, key))
+        for key, value in condition.items()
+    )
 
 
 def evalOr(attributes, conditions) -> bool:
     if len(conditions) == 0:
         return True
 
-    for condition in conditions:
-        if evalCondition(attributes, condition):
-            return True
-    return False
+    return any(evalCondition(attributes, condition) for condition in conditions)
 
 
 def evalAnd(attributes, conditions) -> bool:
-    for condition in conditions:
-        if not evalCondition(attributes, condition):
-            return False
-    return True
+    return all(evalCondition(attributes, condition) for condition in conditions)
 
 
 def isOperatorObject(obj) -> bool:
-    for key in obj.keys():
-        if key[0] != "$":
-            return False
-    return True
+    return all(key[0] == "$" for key in obj.keys())
 
 
 def getType(attributeValue) -> str:
@@ -185,9 +166,7 @@ def getType(attributeValue) -> str:
         return "array"
     if t is dict:
         return "object"
-    if t is bool:
-        return "boolean"
-    return "unknown"
+    return "boolean" if t is bool else "unknown"
 
 
 def getPath(attributes, path):
@@ -202,24 +181,23 @@ def getPath(attributes, path):
 
 def evalConditionValue(conditionValue, attributeValue) -> bool:
     if type(conditionValue) is dict and isOperatorObject(conditionValue):
-        for key, value in conditionValue.items():
-            if not evalOperatorCondition(key, attributeValue, value):
-                return False
-        return True
+        return all(
+            evalOperatorCondition(key, attributeValue, value)
+            for key, value in conditionValue.items()
+        )
     return conditionValue == attributeValue
 
 
 def elemMatch(condition, attributeValue) -> bool:
-    if not type(attributeValue) is list:
+    if type(attributeValue) is not list:
         return False
 
     for item in attributeValue:
         if isOperatorObject(condition):
             if evalConditionValue(condition, item):
                 return True
-        else:
-            if evalCondition(item, condition):
-                return True
+        elif evalCondition(item, condition):
+            return True
 
     return False
 
@@ -246,15 +224,15 @@ def evalOperatorCondition(operator, attributeValue, conditionValue) -> bool:
     elif operator == "$in":
         return attributeValue in conditionValue
     elif operator == "$nin":
-        return not (attributeValue in conditionValue)
+        return attributeValue not in conditionValue
     elif operator == "$elemMatch":
         return elemMatch(conditionValue, attributeValue)
     elif operator == "$size":
-        if not (type(attributeValue) is list):
+        if type(attributeValue) is not list:
             return False
         return evalConditionValue(conditionValue, len(attributeValue))
     elif operator == "$all":
-        if not (type(attributeValue) is list):
+        if type(attributeValue) is not list:
             return False
         for cond in conditionValue:
             passing = False
@@ -265,9 +243,7 @@ def evalOperatorCondition(operator, attributeValue, conditionValue) -> bool:
                 return False
         return True
     elif operator == "$exists":
-        if not conditionValue:
-            return attributeValue is None
-        return attributeValue is not None
+        return attributeValue is not None if conditionValue else attributeValue is None
     elif operator == "$type":
         return getType(attributeValue) == conditionValue
     elif operator == "$not":
@@ -336,7 +312,7 @@ class Experiment(object):
         self.groups = groups
 
     def to_dict(self):
-        obj = {
+        return {
             "key": self.key,
             "variations": self.variations,
             "weights": self.weights,
@@ -354,7 +330,6 @@ class Experiment(object):
             "name": self.name,
             "phase": self.phase,
         }
-        return obj
 
     def update(self, data: dict) -> None:
         weights = data.get("weights", None)
@@ -615,7 +590,7 @@ class FeatureRepository(object):
     def load_features(
         self, api_host: str, client_key: str, decryption_key: str = "", ttl: int = 60
     ) -> Optional[Dict]:
-        key = api_host + "::" + client_key
+        key = f"{api_host}::{client_key}"
 
         cached = self.cache.get(key)
         if not cached:
@@ -639,8 +614,7 @@ class FeatureRepository(object):
                     "Failed to fetch features, received status code %d", r.status
                 )
                 return None
-            decoded = json.loads(r.data.decode("utf-8"))
-            return decoded
+            return json.loads(r.data.decode("utf-8"))
         except Exception:
             logger.warning("Failed to decode feature JSON from GrowthBook API")
             return None
@@ -672,7 +646,7 @@ class FeatureRepository(object):
 
     def _get_features_url(self, api_host: str, client_key: str) -> str:
         api_host = (api_host or "https://cdn.growthbook.io").rstrip("/")
-        return api_host + "/api/features/" + client_key
+        return f"{api_host}/api/features/{client_key}"
 
 
 # Singleton instance
@@ -891,9 +865,7 @@ class GrowthBook(object):
         attr = attr or "id"
         if attr in self._attributes:
             return self._attributes[attr] or ""
-        if attr in self._user:
-            return self._user[attr] or ""
-        return ""
+        return self._user[attr] or "" if attr in self._user else ""
 
     def _getHashValue(self, attr: str = None) -> str:
         return str(self._getOrigHashValue(attr))
@@ -934,11 +906,7 @@ class GrowthBook(object):
             if n is None:
                 return False
 
-            filtered = False
-            for range in filter["ranges"]:
-                if inRange(n, range):
-                    filtered = True
-                    break
+            filtered = any(inRange(n, range) for range in filter["ranges"])
             if not filtered:
                 return True
         return False
@@ -1059,10 +1027,7 @@ class GrowthBook(object):
         # 8.1. Make sure user is in a matching group
         if experiment.groups and len(experiment.groups):
             expGroups = self._groups or {}
-            matched = False
-            for group in experiment.groups:
-                if expGroups[group]:
-                    matched = True
+            matched = any(expGroups[group] for group in experiment.groups)
             if not matched:
                 logger.debug(
                     "Skip experiment %s because user not in required group",
@@ -1160,9 +1125,7 @@ class GrowthBook(object):
                 return True
 
             pathOnly = re.sub(r"^[^/]*/", "/", re.sub(r"^https?:\/\/", "", self._url))
-            if r.search(pathOnly):
-                return True
-            return False
+            return bool(r.search(pathOnly))
         except Exception:
             return True
 
@@ -1181,10 +1144,7 @@ class GrowthBook(object):
             variationId = 0
             inExperiment = False
 
-        meta = None
-        if experiment.meta:
-            meta = experiment.meta[variationId]
-
+        meta = experiment.meta[variationId] if experiment.meta else None
         return Result(
             featureId=featureId,
             inExperiment=inExperiment,
